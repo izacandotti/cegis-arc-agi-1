@@ -39,19 +39,27 @@ O ganho de desempenho não veio apenas de evitar fraudes no teste, mas sim de **
 
 ## Estrutura do Repositório
 
+O projeto adota o padrão **`src`-layout**, separando o código-fonte modular dos metadados, documentação e dados do benchmark:
+
 ```text
 .
-├── main.py                          # Ponto de entrada do experimento principal
-├── arc_cegis/                       # Pacote central do ciclo CEGIS
-│   ├── experiment.py                # Motor do ciclo CEGIS (Padrão vs Anti-Trapaça)
-│   ├── prompts.py                   # Construção de prompts e injeção de regras
-│   ├── sandbox.py                   # Execução isolada em subprocesso (timeout 2.0s)
-│   ├── llm.py                       # Gestão de APIs (Gemini) e Rate-Limiting 
-│   ├── data_loader.py               # Carregamento e validação dos pares ARC-AGI
-│   └── config.py                    # Parâmetros de execução e Poda de Contexto
-├── analysis/                        # Análise de falsa convergência e métricas
-│   └── analyze_false_convergence.py # Auditoria automatizada via LLM-as-a-Judge (JSON)
-├── docs/                            # Documentação científica e metodológica
+├── main.py                          # Ponto de entrada na raiz (executa src.main)
+├── pyproject.toml                   
+├── requirements.txt              
+├── src/                             
+│   ├── main.py                      # Orquestrador do experimento e CLI completo
+│   ├── arc_cegis/                   # Pacote central do ciclo CEGIS
+│   │   ├── __init__.py             
+│   │   ├── experiment.py            # Motor do ciclo CEGIS (Padrão vs Anti-Trapaça)
+│   │   ├── prompts.py               # Construção de prompts e injeção de regras anti-cheat
+│   │   ├── sandbox.py               # Execução isolada em subprocesso 
+│   │   ├── llm.py                   # Gestão de APIs (Gemini) e Rate-Limiting 
+│   │   ├── data_loader.py           # Carregamento e validação dos pares ARC-AGI
+│   │   └── config.py                # Parâmetros de execução, pool LLM e poda de contexto
+│   └── analysis/                    # Ferramentas de análise pós-experimento
+│       ├── __init__.py             
+│       └── analyze_false_convergence.py # Auditoria estatística e LLM-as-a-Judge (JSON)
+├── docs/                            # Documentação científica, metodologia e guias
 ├── experiments/                     # Dados brutos e relatórios dos experimentos
 └── data/                            # Tarefas canônicas do ARC-AGI-1 (JSON)
 ```
@@ -64,7 +72,8 @@ O ganho de desempenho não veio apenas de evitar fraudes no teste, mas sim de **
 
 ```bash
 pip install -r requirements.txt
-
+# Ou opcionalmente em modo editável:
+pip install -e .
 ```
 
 ### 2. Configurar Variáveis de Ambiente (`.env`)
@@ -76,28 +85,36 @@ GEMINI_API_KEY="sua_chave_aqui"
 MAX_CEGIS_ITERS=5
 REQUEST_DELAY=2.0
 MAX_DAILY_REQUESTS=14400
-
 ```
 
 ### 3. Executar o Experimento Comparativo
+
+Você pode executar diretamente pela raiz ou pelo módulo em `src/`:
 
 **Comparação oficial (100 tarefas):**
 
 ```bash
 python3 main.py --tasks ./data --max-tasks 100 --output results_experiment.json
-
+# Ou explicitamente:
+python3 src/main.py --tasks ./data --max-tasks 100 --output results_experiment.json
 ```
 
 **Teste rápido (5 tarefas):**
 
 ```bash
 python3 main.py --tasks ./data --max-tasks 5 --no-resume --output test_results.json
-
 ```
 
 ### 4. Executar Auditoria Qualitativa (LLM-as-a-Judge)
 
-```bash
-python3 analysis/analyze_false_convergence.py results_experiment.json --verbose
+Após a geração do arquivo JSON de resultados, execute o script de análise:
 
+<<<<<<< HEAD
 ```
+=======
+```bash
+python3 src/analysis/analyze_false_convergence.py results_experiment.json --verbose
+# Ou via wrapper de compatibilidade:
+python3 analysis/analyze_false_convergence.py results_experiment.json --verbose
+```
+>>>>>>> 8cc4020 (reorganize project directory tree)

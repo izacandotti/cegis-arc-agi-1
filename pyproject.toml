@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "cegis-arc-agi"
+version = "1.0.0"
+description = "CEGIS com Regularização Indutiva Anti-Trapaça para o benchmark ARC-AGI-1"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "Izac Andotti" }
+]
+dependencies = [
+    "google-genai>=0.1.0",
+    "openai>=1.0.0",
+    "python-dotenv>=1.0.0",
+    "requests>=2.28.0",
+]
+
+[project.scripts]
+arc-cegis = "src.main:main"
+arc-cegis-analyze = "src.analysis.analyze_false_convergence:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
