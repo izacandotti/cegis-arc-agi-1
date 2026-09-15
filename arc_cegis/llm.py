@@ -319,7 +319,7 @@ def call_llm(
 
     gen_config = types.GenerateContentConfig(
         temperature=config.TEMPERATURE,
-        max_output_tokens=2048,
+        max_output_tokens=4096,
         system_instruction=system_instruction,
     )
 
@@ -369,17 +369,28 @@ def call_llm(
                 config=gen_config,
             )
 
-            if response.text:
+            extracted_text = response.text or ""
+            if not extracted_text and response.candidates:
+                # Fallback for reasoning models (e.g. Gemma 4) where thought=True parts are excluded by response.text
+                candidate = response.candidates[0]
+                if candidate.content and candidate.content.parts:
+                    parts_text = []
+                    for part in candidate.content.parts:
+                        if hasattr(part, "text") and part.text:
+                            parts_text.append(part.text)
+                    extracted_text = "\n".join(parts_text).strip()
+
+            if extracted_text:
                 logger.debug(
                     "API request succeeded: model=%s chars=%s attempt=%s request=%s/%s",
                     target_model,
-                    len(response.text),
+                    len(extracted_text),
                     attempt,
                     get_request_count(),
                     config.MAX_DAILY_REQUESTS,
                 )
                 _release_request_slot(llm_config)
-                return response.text
+                return extracted_text
             _release_request_slot(llm_config)
             return ""
 

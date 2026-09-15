@@ -12,11 +12,15 @@ from . import config
 def extract_python_code(response_text: str) -> str:
     """
     Extracts executable Python code from markdown response text.
-    Matches ```python ... ``` or ``` ... ``` code fences, or defaults to raw text.
+    Matches ```python ... ``` or ``` ... ``` code fences, prioritizing blocks
+    that define `def transform`, or defaults to raw text.
     """
-    code_block_match = re.search(r"```(?:python)?\s*([\s\S]*?)\s*```", response_text, re.IGNORECASE)
-    if code_block_match:
-        return code_block_match.group(1).strip()
+    blocks = re.findall(r"```(?:python)?\s*([\s\S]*?)\s*```", response_text, re.IGNORECASE)
+    for block in reversed(blocks):
+        if "def transform" in block:
+            return block.strip()
+    if blocks:
+        return blocks[-1].strip()
     
     if "def transform" in response_text:
         start_idx = response_text.find("def transform")

@@ -9,9 +9,7 @@ CAMADAS DO SCRIPT
 1. Pré-processamento:   filtra tarefas com api_error para não contaminar as métricas.
 2. Análise Estatística: calcula acurácia, taxa de falsa convergência (FC), iterações
                         médias e agrupa tarefas em buckets de desfecho.
-3. Teste de McNemar:    avalia se a diferença de acurácia entre variantes é
-                        estatisticamente significativa.
-4. LLM-as-a-Judge:      usa o Gemini Flash como árbitro para inspecionar o código
+3. LLM-as-a-Judge:      usa o Gemini Flash como árbitro para inspecionar o código
                         gerado e detectar hardcoding — diagnóstico qualitativo de FC.
 
 CRÉDITOS PEDAGÓGICOS
@@ -215,92 +213,7 @@ def compute_stats(
 
 
 # ──────────────────────────────────────────────
-# Seção 4 — Teste estatístico de McNemar
-# ──────────────────────────────────────────────
-
-@dataclass
-class McNemarResult:
-    """
-    Resultado do teste de McNemar para acurácia pareada.
-
-    O teste de McNemar é adequado quando os mesmos itens (tarefas) são avaliados
-    por duas condições diferentes (Padrão vs Antitrapaça). Ele foca nos CASOS
-    DISCORDANTES — tarefas onde os dois métodos divergem — e ignora os concordantes.
-
-    Campos:
-        b        — |only_std|: Padrão acertou, Antitrapaça errou
-        c        — |only_ac|:  Antitrapaça acertou, Padrão errou
-        chi2     — estatística qui-quadrado com correção de continuidade de Edwards
-        valid    — True se b + c > 25 (amostra mínima recomendada)
-        warning  — mensagem de aviso se amostra insuficiente
-    """
-    b: int           # discordantes onde Padrão venceu
-    c: int           # discordantes onde Antitrapaça venceu
-    chi2: float      # χ² com correção de Yates / Edwards
-    valid: bool      # amostra suficiente para significância?
-    warning: str = ""
-
-
-def mcnemar_test(only_std: list[str], only_ac: list[str]) -> McNemarResult:
-    """
-    Calcula o teste de McNemar para comparação pareada de acurácia.
-
-    FÓRMULA USADA:
-        χ² = (|b - c| - 1)² / (b + c)
-
-    Onde:
-        b = tarefas onde SÓ o Padrão acertou (only_std)
-        c = tarefas onde SÓ o Antitrapaça acertou (only_ac)
-
-    O -1 no numerador é a "correção de continuidade de Edwards" (ou correção de Yates),
-    que ajusta para o fato de que a distribuição qui-quadrado é contínua mas os dados
-    são discretos. Ela torna o teste mais conservador, reduzindo falsos positivos.
-
-    A estatística segue distribuição χ² com 1 grau de liberdade.
-    Para p < 0.05, o limiar crítico é χ² > 3.841.
-
-    CONDIÇÃO DE VALIDADE:
-        O teste só é confiável quando b + c > 25. Abaixo disso, a amostra de casos
-        discordantes é muito pequena e o resultado não tem poder estatístico.
-
-    Args:
-        only_std: lista de task_ids onde só o Padrão acertou.
-        only_ac:  lista de task_ids onde só o Antitrapaça acertou.
-
-    Returns:
-        McNemarResult com a estatística e diagnóstico de validade.
-    """
-    b: int = len(only_std)
-    c: int = len(only_ac)
-    total_discordant: int = b + c
-
-    # Evita divisão por zero quando b = c = 0 (ambos métodos idênticos)
-    if total_discordant == 0:
-        return McNemarResult(
-            b=0, c=0, chi2=0.0, valid=False,
-            warning="Nenhum caso discordante encontrado (b + c = 0). Métodos idênticos."
-        )
-
-    # Fórmula de McNemar com correção de continuidade de Edwards
-    # O max(..., 0) garante que o numerador não seja negativo quando |b - c| = 0 ou 1
-    numerator: float = max(abs(b - c) - 1, 0) ** 2
-    chi2: float = numerator / total_discordant
-
-    # Validação da amostra: convenção estatística mínima de 25 casos discordantes
-    MINIMUM_DISCORDANT = 25
-    if total_discordant <= MINIMUM_DISCORDANT:
-        warning = (
-            f"⚠️  Amostra insuficiente: b + c = {total_discordant} ≤ {MINIMUM_DISCORDANT}. "
-            "O teste de McNemar requer pelo menos 25 casos discordantes para ter poder "
-            "estatístico. Interprete χ² com cautela."
-        )
-        return McNemarResult(b=b, c=c, chi2=chi2, valid=False, warning=warning)
-
-    return McNemarResult(b=b, c=c, chi2=chi2, valid=True)
-
-
-# ──────────────────────────────────────────────
-# Seção 5 — LLM-as-a-Judge (Gemini Flash)
+# Seção 4 — LLM-as-a-Judge (Gemini Flash)
 # ──────────────────────────────────────────────
 
 # Constantes de configuração para o modelo árbitro
@@ -631,7 +544,7 @@ class FalseConvergenceJudge:
 
 
 # ──────────────────────────────────────────────
-# Seção 6 — Exibição do relatório
+# Seção 5 — Exibição do relatório
 # ──────────────────────────────────────────────
 
 SEP = "=" * 68
@@ -645,7 +558,6 @@ def print_report(
     std: VariantStats,
     ac: VariantStats,
     buckets: OutcomeBuckets,
-    mc: McNemarResult,
     model: str,
     max_iters: int | str,
     n_removed: int,
@@ -715,32 +627,6 @@ def print_report(
     print(f"  FCs eliminadas (Padrão tinha, Antitrapaça não)    : {len(buckets.fc_fixed):4d}")
     print(f"  FCs introduzidas (Padrão não tinha, Antitrapaça teve): {len(buckets.fc_introduced):4d}")
     print(f"  Redução líquida de FCs                            : {net_fc:>+4d}")
-
-    # ── Teste de McNemar ──────────────────────────────────
-    print(f"\n{SEP}")
-    print("  TESTE DE McNEMAR (significância estatística)")
-    print(f"{SEP}")
-    print(f"  Tabela 2×2 dos casos discordantes:")
-    print(f"  ┌─────────────────────────────────────────────┐")
-    print(f"  │                Antitrapaça PASS  Antitrapaça FAIL │")
-    print(f"  │ Padrão PASS    both_pass          only_std (b={mc.b}) │")
-    print(f"  │ Padrão FAIL    only_ac (c={mc.c})   both_fail          │")
-    print(f"  └─────────────────────────────────────────────┘")
-    print(f"  χ² = (|b - c| - 1)² / (b + c) = {mc.chi2:.4f}")
-
-    if mc.valid:
-        CRITICAL_CHI2_005 = 3.841  # χ²(1, α=0.05)
-        CRITICAL_CHI2_001 = 6.635  # χ²(1, α=0.01)
-        if mc.chi2 >= CRITICAL_CHI2_001:
-            sig = "p < 0.01  ✅ MUITO SIGNIFICATIVO"
-        elif mc.chi2 >= CRITICAL_CHI2_005:
-            sig = "p < 0.05  ✅ SIGNIFICATIVO"
-        else:
-            sig = "p ≥ 0.05  ➡️  Não significativo"
-        print(f"  Interpretação: {sig}")
-        print(f"  (χ² crítico: 3.841 para p<0.05, 6.635 para p<0.01, gl=1)")
-    else:
-        print(f"  {mc.warning}")
 
     # ── Veredicto final ───────────────────────────────────
     print(f"\n{SEP}")
@@ -816,7 +702,7 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description=(
             "Analisa resultados de falsa convergência: CEGIS Padrão vs Antitrapaça.\n"
-            "Inclui filtro de api_error, teste de McNemar e auditoria LLM opcional."
+            "Inclui filtro de api_error e auditoria LLM opcional."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -870,15 +756,11 @@ def main() -> None:
     # ── Computa estatísticas ──────────────────────────────
     stats_padrao, stats_antitrapaca, buckets = compute_stats(valid_results)
 
-    # ── Teste de McNemar ──────────────────────────────────
-    mc = mcnemar_test(buckets.only_std, buckets.only_ac)
-
     # ── Exibe relatório principal ─────────────────────────
     print_report(
         std=stats_padrao,
         ac=stats_antitrapaca,
         buckets=buckets,
-        mc=mc,
         model=cfg.get("model", "?"),
         max_iters=cfg.get("max_cegis_iters", "?"),
         n_removed=n_removed,

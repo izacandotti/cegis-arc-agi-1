@@ -136,6 +136,13 @@ def save_checkpoint(
         summary["baseline_accuracy"] = base_acc
         summary["baseline_correct"] = baseline_correct
 
+    total_llm_requests = sum(
+        (r.get("cegis_padrao", {}).get("iterations_used") or len(r.get("cegis_padrao", {}).get("iteration_history", []))) +
+        (r.get("cegis_antitrapaca", {}).get("iterations_used") or len(r.get("cegis_antitrapaca", {}).get("iteration_history", []))) +
+        (1 if ("baseline" in r and r.get("baseline", {}).get("generated_code")) else 0)
+        for r in detailed_results
+    )
+
     output_payload = {
         "config": {
             "model": model,
@@ -146,7 +153,7 @@ def save_checkpoint(
             "total_tasks_in_dataset": total_tasks,
             "completed_tasks": completed_count,
             "faulty_tasks": len(faulty_task_ids),
-            "total_requests_used": get_request_count(),
+            "total_requests_used": total_llm_requests,
             "include_baseline": include_baseline,
         },
         "summary": summary,
@@ -195,12 +202,19 @@ def save_markdown_report(
     )
     fc_reduction = padrao_false_conv - antitrapaca_false_conv
 
+    total_llm_requests = sum(
+        (r.get("cegis_padrao", {}).get("iterations_used") or len(r.get("cegis_padrao", {}).get("iteration_history", []))) +
+        (r.get("cegis_antitrapaca", {}).get("iterations_used") or len(r.get("cegis_antitrapaca", {}).get("iteration_history", []))) +
+        (1 if ("baseline" in r and r.get("baseline", {}).get("generated_code")) else 0)
+        for r in detailed_results
+    )
+
     lines = [
         "# 📊 Relatório: CEGIS Padrão vs CEGIS Antitrapaça",
         "",
         f"- **Modelo:** `{model}`",
         f"- **Progresso:** **{completed_count}/{total_tasks}** tarefas concluídas (**{progress_pct:.1f}%**)",
-        f"- **Total de Requisições LLM:** {get_request_count()}",
+        f"- **Total de Requisições LLM:** {total_llm_requests}",
         "",
         "## 🔬 Hipótese",
         "",
@@ -295,8 +309,14 @@ def load_checkpoint(output_path: str) -> tuple[List[Dict[str, Any]], int, int, i
         completed_task_ids = set()
         faulty_task_ids = set(data.get("faulty_task_ids", []))
 
+        valid_results = []
         for item in detailed_results:
             task_id = item.get("task_id")
+            # If the task suffered an API failure, don't consider it completed so it can be retried
+            padrao_api_err = item.get("cegis_padrao", {}).get("api_error", False)
+            if padrao_api_err:
+                logger.info("Task %s had API error in previous checkpoint; discarding to retry.", task_id)
+                continue
             if task_id:
                 completed_task_ids.add(task_id)
             if item.get("cegis_padrao", {}).get("success"):
@@ -305,8 +325,9 @@ def load_checkpoint(output_path: str) -> tuple[List[Dict[str, Any]], int, int, i
                 cegis_antitrapaca_correct += 1
             if item.get("baseline", {}).get("success"):
                 baseline_correct += 1
+            valid_results.append(item)
 
-        return detailed_results, cegis_padrao_correct, cegis_antitrapaca_correct, baseline_correct, completed_task_ids, faulty_task_ids
+        return valid_results, cegis_padrao_correct, cegis_antitrapaca_correct, baseline_correct, completed_task_ids, faulty_task_ids
     except Exception as e:
         logger.warning("Failed to read checkpoint from '%s': %s. Starting fresh.", output_path, e)
         return [], 0, 0, 0, set(), set()
@@ -436,6 +457,12 @@ def _run_main() -> None:
         help="Skip the initial provider API connectivity check (not recommended)",
     )
     parser.add_argument(
+        "--reuse-anticheat-from",
+        type=str,
+        default=None,
+        help="Path to existing experiment JSON to reuse as the anti-cheat variant (avoids re-running it)",
+    )
+    parser.add_argument(
         "--request-delay",
         type=float,
         default=config.REQUEST_DELAY,
@@ -476,12 +503,45 @@ def _run_main() -> None:
 
     # 2. Load tasks
     tasks_dict = load_tasks(args.tasks)
+
+    # 2b. Optional reuse of anti-cheat results from historical runs
+    reused_anticheat_map: Dict[str, Dict[str, Any]] = {}
+    reused_baseline_map: Dict[str, Dict[str, Any]] = {}
+    if args.reuse_anticheat_from and os.path.exists(args.reuse_anticheat_from):
+        try:
+            with open(args.reuse_anticheat_from, "r", encoding="utf-8") as f:
+                reused_data = json.load(f)
+                for item in reused_data.get("results", []):
+                    tid = item.get("task_id")
+                    if tid:
+                        ac_data = item.get("cegis_antitrapaca") or item.get("cegis")
+                        if ac_data:
+                            ac_copy = dict(ac_data)
+                            ac_copy["strategy"] = "cegis_antitrapaca"
+                            if "false_convergence" not in ac_copy:
+                                ac_copy["false_convergence"] = bool(
+                                    ac_copy.get("converged_train", False) and not ac_copy.get("success", False)
+                                )
+                            reused_anticheat_map[tid] = ac_copy
+                        if "baseline" in item:
+                            reused_baseline_map[tid] = item["baseline"]
+            logger.info("Loaded %d anti-cheat result(s) from '%s' for reuse.", len(reused_anticheat_map), args.reuse_anticheat_from)
+            if reused_anticheat_map:
+                ordered_tasks = {}
+                for tid in reused_anticheat_map:
+                    if tid in tasks_dict:
+                        ordered_tasks[tid] = tasks_dict[tid]
+                tasks_dict = ordered_tasks
+        except Exception as err:
+            logger.warning("Failed to load reuse file '%s': %s", args.reuse_anticheat_from, err)
+
     if args.max_tasks:
         tasks_dict = dict(list(tasks_dict.items())[:args.max_tasks])
 
     total_tasks = len(tasks_dict)
     logger.info("Loaded %s task(s) in evaluation set.", total_tasks)
     _EMERGENCY_STATE["total_tasks"] = total_tasks
+    task_order = {tid: i for i, tid in enumerate(tasks_dict.keys())}
 
     # 3. Checkpoint / Resume recovery
     detailed_results: List[Dict[str, Any]] = []
@@ -504,6 +564,7 @@ def _run_main() -> None:
             completed_task_ids,
             faulty_task_ids,
         ) = load_checkpoint(args.output)
+        detailed_results.sort(key=lambda r: task_order.get(r.get("task_id", ""), 999999))
         _EMERGENCY_STATE.update({
             "detailed_results": detailed_results,
             "cegis_padrao_correct": cegis_padrao_correct,
@@ -532,17 +593,23 @@ def _run_main() -> None:
     auth_failed = False
 
     def evaluate_task(task_id: str, task_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Run both CEGIS variants (and optionally baseline) for one task in a worker thread."""
+        """Run standard CEGIS (and reuse or run anti-cheat) for one task in a worker thread."""
         selected_model = None if config.LLM_POOL else args.model
         padrao_res = run_cegis_padrao(task_data, max_iters=args.max_iters, model=selected_model)
-        at_res = run_cegis_antitrapaca(task_data, max_iters=args.max_iters, model=selected_model)
+        if task_id in reused_anticheat_map:
+            at_res = reused_anticheat_map[task_id]
+        else:
+            at_res = run_cegis_antitrapaca(task_data, max_iters=args.max_iters, model=selected_model)
         result: Dict[str, Any] = {
             "task_id": task_id,
             "cegis_padrao": padrao_res,
             "cegis_antitrapaca": at_res,
         }
         if args.include_baseline:
-            result["baseline"] = run_baseline(task_data, model=selected_model)
+            if task_id in reused_baseline_map:
+                result["baseline"] = reused_baseline_map[task_id]
+            else:
+                result["baseline"] = run_baseline(task_data, model=selected_model)
         return result
 
     # 4. Run evaluations with Protections and Incremental Checkpointing
@@ -607,6 +674,7 @@ def _run_main() -> None:
                     consecutive_api_failures = 0
 
                 detailed_results.append(result)
+                detailed_results.sort(key=lambda r: task_order.get(r.get("task_id", ""), 999999))
                 completed_task_ids.add(task_id)
                 _EMERGENCY_STATE.update({
                     "cegis_padrao_correct": cegis_padrao_correct,

@@ -1,85 +1,103 @@
-# ARC-AGI-1: CEGIS Standard vs CEGIS+Anti-Cheat
+# 🧩 ARC-AGI-1: CEGIS com Regularização Indutiva Anti-Trapaça
 
-Experimento comparativo de síntese de programas no benchmark **ARC-AGI-1**.
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/)
+[![Benchmark ARC-AGI](https://img.shields.io/badge/benchmark-ARC--AGI--1-orange.svg)](https://arcprize.org/)
+[![Artigo PDF](https://img.shields.io/badge/artigo-PDF-red.svg)](docs/artigo.pdf)
 
-**Foco da pesquisa**: quantificar o impacto do **prompt anti-cheat** na redução de **falsa convergência** dentro do laço CEGIS.
+**Avaliação Experimental do CEGIS com Prompt Anti-Trapaça na Resolução do ARC-AGI**.
 
-## Hipótese Central
+ Este estudo investiga a injeção de restrições semânticas Anti-Trapaça (*Anti-Cheat*) no laço de refinamento **CEGIS** (*Counterexample-Guided Inductive Synthesis*) mediado por LLMs, atuando como um **regularizador** que previne atalhos superficiais e destrava a convergência de algoritmos universais no benchmark **ARC-AGI-1**.
 
-O CEGIS pode sofrer de **falsa convergência**: o modelo gera código que passa em todos os exemplos de treino (`converged_train=True`) via hardcoding ou memorização, mas falha nos pares de teste ocultos (`success=False`). Ao injetar regras explícitas que proíbem hardcoding tanto no prompt inicial quanto nos feedbacks de contraexemplo, espera-se reduzir essa falha sem perda de acurácia geral.
+---
 
-→ Veja [docs/hipotese_anticheat.md](docs/hipotese_anticheat.md) para a formulação completa.
+## 🎯 Abordagem Proposta e Isolamento de Variáveis
 
-## Métricas Principais
+| Estratégia | Prompt Inicial  | Feedback de Contraexemplo  |
+| :--- | :---: | :---: |
+| **CEGIS Padrão** *(Controle)* | Sem regras Anti-Cheat | Entrada, Saída Esperada, Saída Produzida |
+| **CEGIS Anti-Trapaça** *(Proposto)* | **Sem regras Anti-Cheat** | Entrada, Saída Esperada, Saída Produzida + Regras Anti-Trapaça |
 
-- **Acurácia**: % de tarefas com `success=True` no par de teste oculto
-- **Taxa de Falsa Convergência (FC)**: `converged_train=True AND success=False` / n_tasks
-- **Redução de FC**: `FC_standard - FC_anticheat`
-- **Ganho absoluto de acurácia**: `acc_anticheat - acc_standard`
+>  O prompt da iteração inicial é **idêntico** em ambas as estratégias. Como na primeira tentativa o modelo não possui acesso às respostas esperadas (gabarito), as regras anti-trapaça são injetadas somente a partir do primeiro feedback semântico.
 
+---
 
-## Proteções Free Tier
+## Resultados Principais (100 Tarefas)
 
-- **Context Pruning no CEGIS**: prompt = especificação inicial + código atual + contraexemplo ativo. Tamanho constante, sem acumulação exponencial.
-- **Multi-Key Pool**: rotação entre chaves API.
-- **Rate Limiter (RPM)**: delay configurável entre requests.
-- **Daily Quota Guard (RPD)**: teto de requisições diárias com pausa segura.
-- **Checkpoint/Resume**: salva após cada tarefa; retoma de onde parou.
+A aplicação do prompt Anti-Trapaça elevou a acurácia de generalização no teste oculto e reduziu a oscilação por ajustes locais sem adicionar custos adicionais de inferência:
 
-## Setup & Execução
+| Métrica | Gemini 3.1 Flash-Lite (Padrão) | Gemini 3.1 Flash-Lite (Anti-Trapaça) | \\(\Delta\\) Gemini | Gemma 4 26B (Padrão) | Gemma 4 26B (Anti-Trapaça) | \\(\Delta\\) Gemma |
+| :--- | :---: | :---: | :---: | :---: | :---: | :---: |
+| **Acurácia (Teste Oculto)** | **47,0%** | **55,0%** | **+8,0%** | **31,0%** | **40,0%** | **+9,0%** |
+| **Convergência no Treino** | 52,0% | 56,0% | +4,0% | 32,0% | 41,0% | +9,0% |
+| **Falsas Convergências (FC)** | **6** | **2** | **-66,7%** | 2 | 2 | 0,0% |
+| **Requisições à API (Total)** | 318 | 303 | **-4,7%** | 381 | 361 | **-5,2%** |
 
-### 1. Instalar dependências
-```bash
-pip install -r requirements.txt
+### 💡 A Descoberta
+O ganho de desempenho não veio apenas de evitar fraudes no teste, mas sim de **destravar a convergência de treino** (responsável por 80% a 90% do aumento de acurácia). Ao proibir remendos locais baseados no gabarito, o prompt força o modelo a abandonar ciclos de correções infrutíferas e encontrar operadores geométricos universais.
+
+---
+
+## 🛠️ Estrutura do Repositório
+
+```text
+.
+├── main.py                          # Ponto de entrada do experimento principal
+├── arc_cegis/                       # Pacote central do ciclo CEGIS
+│   ├── experiment.py                # Motor do ciclo CEGIS (Padrão vs Anti-Trapaça)
+│   ├── prompts.py                   # Construção de prompts e injeção de regras
+│   ├── sandbox.py                   # Execução isolada em subprocesso (timeout 2.0s)
+│   ├── llm.py                       # Gestão de APIs (Gemini) e Rate-Limiting 
+│   ├── data_loader.py               # Carregamento e validação dos pares ARC-AGI
+│   └── config.py                    # Parâmetros de execução e Poda de Contexto
+├── analysis/                        # Análise de falsa convergência e métricas
+│   └── analyze_false_convergence.py # Auditoria automatizada via LLM-as-a-Judge (JSON)
+├── docs/                            # Documentação científica e metodológica
+├── experiments/                     # Dados brutos e relatórios dos experimentos
+└── data/                            # Tarefas canônicas do ARC-AGI-1 (JSON)
 ```
 
-### 2. Configurar variáveis de ambiente (`.env`)
-```env
-GEMINI_API_KEY="sua_chave"
+---
 
+## 🚀 Setup & Execução
+
+### 1. Instalar Dependências
+
+```bash
+pip install -r requirements.txt
+
+```
+
+### 2. Configurar Variáveis de Ambiente (`.env`)
+
+Crie um arquivo `.env` na raiz do projeto com as seguintes variáveis:
+
+```env
+GEMINI_API_KEY="sua_chave_aqui"
 MAX_CEGIS_ITERS=5
 REQUEST_DELAY=2.0
 MAX_DAILY_REQUESTS=14400
+
 ```
 
-Variáveis opcionais:
-| Variável | Padrão | Descrição |
-|---|---|---|
-| `MODEL_NAME` | `gemini-3.1-flash-lite` | Modelo alvo |
-| `MAX_CEGIS_ITERS` | `5` | Máximo de iterações de refinamento |
-| `TIMEOUT_SECONDS` | `2.0` | Timeout de execução Python por teste |
-| `REQUEST_DELAY` | `2.0` | Delay entre requests (segundos) |
-| `MAX_DAILY_REQUESTS` | `14400` | Teto de requisições diárias |
-| `INCLUDE_BASELINE` | `false` | Incluir baseline (1-shot) automaticamente |
+### 3. Executar o Experimento Comparativo
 
-### 3. Executar o experimento
+**Comparação oficial (100 tarefas):**
 
 ```bash
-# Comparação principal: CEGIS Standard vs CEGIS+Anti-Cheat (100 tasks)
 python3 main.py --tasks ./data --max-tasks 100 --output results_experiment.json
 
-# Com baseline 1-shot como referência adicional
-python3 main.py --tasks ./data --max-tasks 100 --include-baseline --output results_experiment.json
-
-# Reiniciar do zero (ignorar checkpoint existente)
-python3 main.py --tasks ./data --max-tasks 100 --no-resume --output results_experiment.json
-
-# Teste rápido com 5 tasks
-python3 main.py --tasks ./data --max-tasks 5 --no-resume --output test_results.json
 ```
 
-### 4. Analisar resultados
+**Teste rápido (5 tarefas):**
 
 ```bash
-# Tabela comparativa completa com métricas de falsa convergência
-python analysis/analyze_false_convergence.py results_experiment.json
+python3 main.py --tasks ./data --max-tasks 5 --no-resume --output test_results.json
 
-# Com lista de tasks por categoria
-python analysis/analyze_false_convergence.py results_experiment.json --verbose
 ```
 
-## Resultados Anteriores
+### 4. Executar Auditoria Qualitativa (LLM-as-a-Judge)
 
-O experimento original (Baseline 1-shot vs CEGIS) com `gemma-4-31b-it` em 100 tasks está preservado em:
-- `experiments/raw_results/baseline_vs_cegis/`
-- `experiments/baseline_vs_cegis_report.md`
+```bash
+python3 analysis/analyze_false_convergence.py results_experiment.json --verbose
+
+```
