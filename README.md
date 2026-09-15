@@ -72,8 +72,6 @@ O projeto adota o padrão **`src`-layout**, separando o código-fonte modular do
 
 ```bash
 pip install -r requirements.txt
-# Ou opcionalmente em modo editável:
-pip install -e .
 ```
 
 ### 2. Configurar Variáveis de Ambiente (`.env`)
@@ -95,8 +93,6 @@ Você pode executar diretamente pela raiz ou pelo módulo em `src/`:
 
 ```bash
 python3 main.py --tasks ./data --max-tasks 100 --output results_experiment.json
-# Ou explicitamente:
-python3 src/main.py --tasks ./data --max-tasks 100 --output results_experiment.json
 ```
 
 **Teste rápido (5 tarefas):**
@@ -109,12 +105,7 @@ python3 main.py --tasks ./data --max-tasks 5 --no-resume --output test_results.j
 
 Após a geração do arquivo JSON de resultados, execute o script de análise:
 
-<<<<<<< HEAD
-```
-=======
 ```bash
 python3 src/analysis/analyze_false_convergence.py results_experiment.json --verbose
-# Ou via wrapper de compatibilidade:
-python3 analysis/analyze_false_convergence.py results_experiment.json --verbose
 ```
->>>>>>> 8cc4020 (reorganize project directory tree)
+
