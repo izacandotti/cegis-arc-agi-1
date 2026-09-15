@@ -10,7 +10,7 @@
 
 ---
 
-## 🎯 Abordagem Proposta e Isolamento de Variáveis
+## Abordagem Proposta e Isolamento de Variáveis
 
 | Estratégia | Prompt Inicial  | Feedback de Contraexemplo  |
 | :--- | :---: | :---: |
@@ -37,7 +37,7 @@ O ganho de desempenho não veio apenas de evitar fraudes no teste, mas sim de **
 
 ---
 
-## 🛠️ Estrutura do Repositório
+## Estrutura do Repositório
 
 ```text
 .
@@ -58,7 +58,7 @@ O ganho de desempenho não veio apenas de evitar fraudes no teste, mas sim de **
 
 ---
 
-## 🚀 Setup & Execução
+## Setup & Execução
 
 ### 1. Instalar Dependências
 
